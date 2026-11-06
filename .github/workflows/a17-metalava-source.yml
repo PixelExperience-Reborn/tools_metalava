@@ -1,0 +1,92 @@
+name: Android 17 Metalava official-source and API graph audit
+
+on:
+  push:
+    branches:
+      - audit/a17-metalava-source-20261106
+    paths:
+      - 'audit/check_metalava_source.py'
+      - 'docs/ANDROID_17_METALAVA_SOURCE_AUDIT.md'
+      - '.github/workflows/a17-metalava-source.yml'
+  pull_request:
+    paths:
+      - 'audit/check_metalava_source.py'
+      - 'docs/ANDROID_17_METALAVA_SOURCE_AUDIT.md'
+      - '.github/workflows/a17-metalava-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-official-aosp17-metalava:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout archived PE Metalava audit branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Fetch old PE merge and both Android14 parents
+        run: |
+          git fetch -q --filter=blob:none --no-tags --depth=2 origin \
+            +refs/heads/seventeen:refs/remotes/origin/seventeen
+      - name: Fetch exact official AOSP17 metalava tag (source only)
+        run: |
+          mkdir -p "$RUNNER_TEMP/aosp17-metalava"
+          git -C "$RUNNER_TEMP/aosp17-metalava" init -q
+          git -C "$RUNNER_TEMP/aosp17-metalava" remote add origin \
+            https://android.googlesource.com/platform/tools/metalava
+          git -C "$RUNNER_TEMP/aosp17-metalava" fetch -q \
+            --filter=blob:none --depth=1 --no-tags origin \
+            refs/tags/android-17.0.0_r1
+      - name: Fetch reviewed AOSP17 PixelExperience-Reborn manifest
+        run: |
+          git clone -q --depth=1 \
+            --branch port/a17-aosp17-manifest-20261102 \
+            https://github.com/PixelExperience-Reborn/manifest.git \
+            "$RUNNER_TEMP/manifest"
+      - name: Check old PE zero delta, official AOSP17 tag and modular host API
+        run: |
+          python3 audit/check_metalava_source.py \
+            "$GITHUB_WORKSPACE" \
+            "$RUNNER_TEMP/aosp17-metalava" \
+            "$RUNNER_TEMP/manifest"
+      - name: Run full reviewed manifest entrypoint regression suite
+        run: |
+          cd "$RUNNER_TEMP/manifest"
+          python3 -m unittest discover -s tools \
+            -p 'test_aosp17_manifest_entrypoint.py' -v
+      - name: Resolve selected AOSP17 projects with official repo client
+        run: |
+          curl --fail --silent --show-error --location \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$RUNNER_TEMP/repo"
+          chmod +x "$RUNNER_TEMP/repo"
+          mkdir -p "$RUNNER_TEMP/repo-graph"
+          cd "$RUNNER_TEMP/repo-graph"
+          "$RUNNER_TEMP/repo" init -q --no-clone-bundle \
+            -u https://github.com/PixelExperience-Reborn/manifest \
+            -b port/a17-aosp17-manifest-20261102 -m default.xml
+          "$RUNNER_TEMP/repo" manifest -o "$RUNNER_TEMP/resolved.xml"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import xml.etree.ElementTree as ET
+
+          doc = ET.parse(Path(os.environ["RUNNER_TEMP"]) / "resolved.xml").getroot()
+          projects = doc.findall(".//project")
+          owners = {p.get("path") or p.get("name"): p.get("name") for p in projects}
+          assert len(owners) == len(projects) == 1069, (
+              "unexpected count or duplicate source owner", len(projects), len(owners))
+          assert owners.get("tools/metalava") == "platform/tools/metalava"
+          assert "tools_metalava" not in owners.values()
+          assert owners.get("frameworks/base") == "platform/frameworks/base"
+          assert owners.get("prebuilts/sdk") == "platform/prebuilts/sdk"
+          print("PASS: official repo manifest retains one AOSP17 Metalava owner")
+          print("PASS: frameworks/base, prebuilts/sdk and 1069 selected projects intact")
+          PY
+      - name: Explicit source-only scope
+        run: |
+          echo "SOURCE-ONLY: Git identities, Metalava Soong structure, manifest + regressions."
+          echo "NOT TESTED: full repo sync, Soong/Kotlin build, Gradle, checkapi, SDK stubs, device ROM/boot."
