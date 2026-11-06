@@ -81,10 +81,12 @@ jobs:
               "unexpected count or duplicate source owner", len(projects), len(owners))
           assert owners.get("tools/metalava") == "platform/tools/metalava"
           assert "tools_metalava" not in owners.values()
-          assert owners.get("frameworks/base") == "platform/frameworks/base"
+          # A17 P0 already has a separately reviewed, pinned PE frameworks_base.
+          assert owners.get("frameworks/base") == "frameworks_base"
           assert owners.get("prebuilts/sdk") == "platform/prebuilts/sdk"
           print("PASS: official repo manifest retains one AOSP17 Metalava owner")
-          print("PASS: frameworks/base, prebuilts/sdk and 1069 selected projects intact")
+          print("PASS: reviewed PE frameworks_base owner and official prebuilts/sdk retained")
+          print("PASS: all 1069 default-selected projects have unique source paths")
           PY
       - name: Explicit source-only scope
         run: |
